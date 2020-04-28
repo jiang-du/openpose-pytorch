@@ -48,3 +48,9 @@ Temporary Items
 
 # .nfs files are created when an open file is removed but is still being accessed
 .nfs*
+
+# test images
+*.jpg
+*.jpeg
+*.png
+*.bmp

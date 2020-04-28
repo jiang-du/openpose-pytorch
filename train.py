@@ -12,33 +12,36 @@ model = openpose_model(num_stages = config.num_stages).cuda()
 # 机子只有一块卡，不需要并行计算
 # model = torch.nn.DataParallel(model).cuda()
 
-# 加载预训练权重
-functions.load_weights(model)
+# 加载预训练权重，并获取返回值(加载模式)
+load_flag = functions.load_weights(model)
 
-# 前5个固定epoch固定住VGG部分，并训练后面的网络结构
-for i in range(20):
-    for param in model.model0[i].parameters():
-        # 梯度锁定
-        param.requires_grad = False
+# 如果返回值为1或者2，不需要训练前5个epoch
+if (load_flag==0) or (load_flag==3):
+    # 前5个固定epoch固定住VGG部分，并训练后面的网络结构
+    for i in range(20):
+        for param in model.model0[i].parameters():
+            # 梯度锁定
+            param.requires_grad = False
 
-trainable_vars = [param for param in model.parameters() if param.requires_grad]
-optimizer = torch.optim.SGD(trainable_vars, lr = config.learning_rate,
-                           momentum = config.momentum,
-                           weight_decay = config.weight_decay,
-                           nesterov = config.nesterov)
+    trainable_vars = [param for param in model.parameters() if param.requires_grad]
+    optimizer = torch.optim.SGD(trainable_vars, lr = config.learning_rate,
+                            momentum = config.momentum,
+                            weight_decay = config.weight_decay,
+                            nesterov = config.nesterov)
 
-for epoch in range(5):
-    # train
-    train_loss = functions.train(train_loader, model, optimizer, epoch)
-    torch.cuda.empty_cache()
+    for epoch in range(5):
+        # train
+        train_loss = functions.train(train_loader, model, optimizer, epoch)
+        torch.cuda.empty_cache()
 
-    # validation
-    val_loss = functions.validate(val_loader, model, epoch)
-    torch.cuda.empty_cache()
+        # validation
+        val_loss = functions.validate(val_loader, model, epoch)
+        torch.cuda.empty_cache()
 
-    # 训练前5个epoch时保存临时权重
-    torch.save(model.state_dict(), config.pre_model_name)
-    print("Saved the weight of epoch %d."%epoch)
+        # 训练前5个epoch时保存临时权重
+        torch.save(model.state_dict(), config.pre_model_name)
+        print("Saved the weight of epoch %d."%epoch)
+    # 到此，初步训练阶段完成
 
 # 对VGG部分的梯度解除锁定
 for param in model.parameters():

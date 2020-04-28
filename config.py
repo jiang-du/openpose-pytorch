@@ -1,6 +1,6 @@
 # ----- 网络基本参数设置 -----
 num_stages = 4
-batch_size = 16
+batch_size = 8
 num_epochs = 75
 # ----- 优化器设置 -----
 learning_rate = 1.0
