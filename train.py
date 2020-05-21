@@ -4,9 +4,9 @@ train_loader, val_loader, train_data, val_data = functions.train_preparation()
 
 # 定义网络结构，并加载初始权重
 import torch
-from net_arch import openpose_model
+from net_arch import openpose_pami
 import config
-model = openpose_model(num_stages = config.num_stages).cuda()
+model = openpose_pami(num_stages = config.num_stages).cuda()
 # print(model)
 
 # 机子只有一块卡，不需要并行计算
@@ -62,9 +62,11 @@ best_val_loss = inf
 for epoch in range(5, config.num_epochs):
     # train
     train_loss = functions.train(train_loader, model, optimizer, epoch)
+    torch.cuda.empty_cache() # 显存太小了，只好不断的释放空间
 
     # validation
     val_loss = functions.validate(val_loader, model, epoch)
+    torch.cuda.empty_cache() # 显存太小了，只好不断的释放空间
     
     lr_scheduler.step(val_loss)
     

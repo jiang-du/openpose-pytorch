@@ -120,45 +120,29 @@ class AverageMeter(object):
         self.count += n
         self.avg = self.sum / self.count
 
-def build_names():
-    names = []
-
-    for j in range(1, __import__("config").num_stages + 1):
-        for k in range(1, 3):
-            names.append('loss_stage%d_L%d' % (j, k))
-    return names
-
-def get_loss(saved_for_loss, heat_temp, vec_temp):
+def get_loss(intermediate_map, heat_temp, vec_temp):
     import torch.nn
     import collections
-    names = build_names()
     saved_for_log = collections.OrderedDict()
     criterion = torch.nn.MSELoss(reduction='mean').cuda()
     total_loss = 0
 
-    for j in range(__import__("config").num_stages):
-        pred1 = saved_for_loss[2 * j]
-        pred2 = saved_for_loss[2 * j + 1] 
-
-
-        # Compute losses
-        loss1 = criterion(pred1, vec_temp)
-        loss2 = criterion(pred2, heat_temp) 
-
-        total_loss += loss1
-        total_loss += loss2
-        # print(total_loss)
-
-        # Get value from Variable and save for log
-        saved_for_log[names[2 * j]] = loss1.item()
-        saved_for_log[names[2 * j + 1]] = loss2.item()
+    for j in range(3):
+        pred_paf = intermediate_map[j]
+        loss_paf = criterion(pred_paf, vec_temp)
+        total_loss += loss_paf
+        saved_for_log["loss_stage%d" % (j+1)] = loss_paf.item()
+    pred_hm = intermediate_map[3]
+    loss_hm = criterion(pred_hm, heat_temp)
+    total_loss += loss_hm
+    saved_for_log["loss_stage4"] = loss_hm.item()
 
     saved_for_log['max_ht'] = torch.max(
-        saved_for_loss[-1].data[:, 0:-1, :, :]).item()
+        intermediate_map[-1].data[:, 0:-1, :, :]).item()
     saved_for_log['min_ht'] = torch.min(
-        saved_for_loss[-1].data[:, 0:-1, :, :]).item()
-    saved_for_log['max_paf'] = torch.max(saved_for_loss[-2].data).item()
-    saved_for_log['min_paf'] = torch.min(saved_for_loss[-2].data).item()
+        intermediate_map[-1].data[:, 0:-1, :, :]).item()
+    saved_for_log['max_paf'] = torch.max(intermediate_map[-2].data).item()
+    saved_for_log['min_paf'] = torch.min(intermediate_map[-2].data).item()
 
     return total_loss, saved_for_log
 
@@ -172,8 +156,10 @@ def train(train_loader, model, optimizer, epoch):
     losses = AverageMeter()
     
     meter_dict = {}
-    for name in build_names():
-        meter_dict[name] = AverageMeter()
+    meter_dict['loss_stage1'] = AverageMeter()
+    meter_dict['loss_stage2'] = AverageMeter()
+    meter_dict['loss_stage3'] = AverageMeter()
+    meter_dict['loss_stage4'] = AverageMeter()
     meter_dict['max_ht'] = AverageMeter()
     meter_dict['min_ht'] = AverageMeter()    
     meter_dict['max_paf'] = AverageMeter()    
@@ -198,9 +184,9 @@ def train(train_loader, model, optimizer, epoch):
         heatmap_target = heatmap_target.cuda()
         paf_target = paf_target.cuda()
         # compute output
-        _,saved_for_loss = model(img)
+        intermediate_map = model(img)
         
-        total_loss, saved_for_log = get_loss(saved_for_loss, heatmap_target, paf_target)
+        total_loss, saved_for_log = get_loss(intermediate_map, heatmap_target, paf_target)
         
         for name,_ in meter_dict.items():
             meter_dict[name].update(saved_for_log[name], img.size(0))
@@ -220,6 +206,7 @@ def train(train_loader, model, optimizer, epoch):
             print("[Train] Epoch %d, Iteration [%d/%d]:" % (epoch, i, len(train_loader)))
             print("   Total Loss = {loss:.6f}".format(loss=losses.val))
 
+            """
             # Obtain the detailed losses
             # 获取具体每个stage的loss
             stage_losses_l1 = list()
@@ -239,7 +226,7 @@ def train(train_loader, model, optimizer, epoch):
             for j in range(len(stage_losses_l2)):
                 print_text += "%8.4f" % stage_losses_l2[j]
             print(print_text)
-
+            """
     return losses.avg
 
 def validate(val_loader, model, epoch):
@@ -249,8 +236,10 @@ def validate(val_loader, model, epoch):
     losses = AverageMeter()
     
     meter_dict = {}
-    for name in build_names():
-        meter_dict[name] = AverageMeter()
+    meter_dict['loss_stage1'] = AverageMeter()
+    meter_dict['loss_stage2'] = AverageMeter()
+    meter_dict['loss_stage3'] = AverageMeter()
+    meter_dict['loss_stage4'] = AverageMeter()
     meter_dict['max_ht'] = AverageMeter()
     meter_dict['min_ht'] = AverageMeter()    
     meter_dict['max_paf'] = AverageMeter()    
@@ -272,9 +261,9 @@ def validate(val_loader, model, epoch):
         paf_target = paf_target.cuda()
         
         # compute output
-        _,saved_for_loss = model(img)
+        intermediate_map = model(img)
         
-        total_loss, saved_for_log = get_loss(saved_for_loss, heatmap_target, paf_target)
+        total_loss, saved_for_log = get_loss(intermediate_map, heatmap_target, paf_target)
                
         #for name,_ in meter_dict.items():
         #    meter_dict[name].update(saved_for_log[name], img.size(0))

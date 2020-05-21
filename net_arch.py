@@ -24,6 +24,7 @@ def make_stages(cfg_dict):
     Args:
         cfg_dict: a dictionary
     """
+    stage_layer = torch.nn.ModuleList()
     layers = []
     for i in range(len(cfg_dict) - 1):
         one_ = cfg_dict[i]
@@ -35,191 +36,166 @@ def make_stages(cfg_dict):
                 conv2d = torch.nn.Conv2d(in_channels=v[0], out_channels=v[1],
                                    kernel_size=v[2], stride=v[3],
                                    padding=v[4])
-                layers += [conv2d, torch.nn.ReLU(inplace=True)]
+                stage_layer.append(conv2d)
+                stage_layer.append(torch.nn.ReLU(inplace=True))
     one_ = list(cfg_dict[-1].keys())
     k = one_[0]
     v = cfg_dict[-1][k]
     conv2d = torch.nn.Conv2d(in_channels=v[0], out_channels=v[1],
                        kernel_size=v[2], stride=v[3], padding=v[4])
-    layers += [conv2d]
-    return torch.nn.Sequential(*layers)
+    stage_layer.append(conv2d)
+    return stage_layer # 注意这里不能用Sequential，因为要写densenet
 
-def openpose_model(num_stages = 6):
-    if num_stages>6:
-        num_stages = 6
-        raise Exception("At most 6 stages.")
+def openpose_pami(num_stages = 6):
+    # tp表示PAF场的stage，tc表示confidence map的stage数
+    tp=3
+    tc=1 # 暂时还不能编辑
     blocks = {}
     # block0是用了VGG前10层作为特征提取，这部分需要载入ImageNet权重
     block0 = [{'conv1_1': [3, 64, 3, 1, 1]},
                 {'conv1_2': [64, 64, 3, 1, 1]},
-                {'pool1_stage1': [2, 2, 0]},
+                {'pool1': [2, 2, 0]},
                 {'conv2_1': [64, 128, 3, 1, 1]},
                 {'conv2_2': [128, 128, 3, 1, 1]},
-                {'pool2_stage1': [2, 2, 0]},
+                {'pool2': [2, 2, 0]},
                 {'conv3_1': [128, 256, 3, 1, 1]},
                 {'conv3_2': [256, 256, 3, 1, 1]},
                 {'conv3_3': [256, 256, 3, 1, 1]},
                 {'conv3_4': [256, 256, 3, 1, 1]},
-                {'pool3_stage1': [2, 2, 0]},
+                {'pool3': [2, 2, 0]},
                 {'conv4_1': [256, 512, 3, 1, 1]},
                 {'conv4_2': [512, 512, 3, 1, 1]},
-                {'conv4_3_CPM': [512, 256, 3, 1, 1]},
-                {'conv4_4_CPM': [256, 128, 3, 1, 1]}]
+                {'conv4_3': [512, 256, 3, 1, 1]},
+                {'conv4_4': [256, 128, 3, 1, 1]}]
 
-    # Stage 1
-    blocks['block1_1'] = [{'conv5_1_CPM_L1': [128, 128, 3, 1, 1]},
-                          {'conv5_2_CPM_L1': [128, 128, 3, 1, 1]},
-                          {'conv5_3_CPM_L1': [128, 128, 3, 1, 1]},
-                          {'conv5_4_CPM_L1': [128, 512, 1, 1, 0]},
-                          {'conv5_5_CPM_L1': [512, 38, 1, 1, 0]}]
+    # Stage 1 提PAF场所以输出heatmap是输出channel=38的维度
+    blocks['block1'] = [
+        {'conv_stage1_denseblock1_1': [128, 128, 3, 1, 1]},
+        {'conv_stage1_denseblock1_2': [128, 128, 3, 1, 1]},
+        {'conv_stage1_denseblock1_3': [128, 128, 3, 1, 1]},
+        {'conv_stage1_denseblock2_1': [128, 128, 3, 1, 1]},
+        {'conv_stage1_denseblock2_2': [128, 128, 3, 1, 1]},
+        {'conv_stage1_denseblock2_3': [128, 128, 3, 1, 1]},
+        {'conv_stage1_denseblock3_1': [128, 128, 3, 1, 1]},
+        {'conv_stage1_denseblock3_2': [128, 128, 3, 1, 1]},
+        {'conv_stage1_denseblock3_3': [128, 128, 3, 1, 1]},
+        {'conv_stage1_denseblock4_1': [128, 128, 3, 1, 1]},
+        {'conv_stage1_denseblock4_2': [128, 128, 3, 1, 1]},
+        {'conv_stage1_denseblock4_3': [128, 128, 3, 1, 1]},
+        {'conv_stage1_denseblock5_1': [128, 128, 3, 1, 1]},
+        {'conv_stage1_denseblock5_2': [128, 128, 3, 1, 1]},
+        {'conv_stage1_denseblock5_3': [128, 128, 3, 1, 1]},
+        {'conv_stage1_6': [128, 512, 1, 1, 0]},
+        {'conv_stage1_7': [512, 38, 1, 1, 0]}
+    ]
 
-    blocks['block1_2'] = [{'conv5_1_CPM_L2': [128, 128, 3, 1, 1]},
-                          {'conv5_2_CPM_L2': [128, 128, 3, 1, 1]},
-                          {'conv5_3_CPM_L2': [128, 128, 3, 1, 1]},
-                          {'conv5_4_CPM_L2': [128, 512, 1, 1, 0]},
-                          {'conv5_5_CPM_L2': [512, 19, 1, 1, 0]}]
-
-    # Stages 2 - num_stages (默认6)
-    for i in range(2, num_stages + 1):
-        blocks['block%d_1' % i] = [
-            {'Mconv1_stage%d_L1' % i: [185, 128, 7, 1, 3]},
-            {'Mconv2_stage%d_L1' % i: [128, 128, 7, 1, 3]},
-            {'Mconv3_stage%d_L1' % i: [128, 128, 7, 1, 3]},
-            {'Mconv4_stage%d_L1' % i: [128, 128, 7, 1, 3]},
-            {'Mconv5_stage%d_L1' % i: [128, 128, 7, 1, 3]},
-            {'Mconv6_stage%d_L1' % i: [128, 128, 1, 1, 0]},
-            {'Mconv7_stage%d_L1' % i: [128, 38, 1, 1, 0]}
+    # Stage 2 - tp 提PAF场所以输出heatmap是输出channel=38的维度
+    for i in range(2, tp+1):
+        blocks['block%d' % i] = [
+            {'conv_stage%d_denseblock1_1' % i: [128+38, 128, 3, 1, 1]},
+            {'conv_stage%d_denseblock1_2' % i: [128, 128, 3, 1, 1]},
+            {'conv_stage%d_denseblock1_3' % i: [128, 128, 3, 1, 1]},
+            {'conv_stage%d_denseblock2_1' % i: [128, 128, 3, 1, 1]},
+            {'conv_stage%d_denseblock2_2' % i: [128, 128, 3, 1, 1]},
+            {'conv_stage%d_denseblock2_3' % i: [128, 128, 3, 1, 1]},
+            {'conv_stage%d_denseblock3_1' % i: [128, 128, 3, 1, 1]},
+            {'conv_stage%d_denseblock3_2' % i: [128, 128, 3, 1, 1]},
+            {'conv_stage%d_denseblock3_3' % i: [128, 128, 3, 1, 1]},
+            {'conv_stage%d_denseblock4_1' % i: [128, 128, 3, 1, 1]},
+            {'conv_stage%d_denseblock4_2' % i: [128, 128, 3, 1, 1]},
+            {'conv_stage%d_denseblock4_3' % i: [128, 128, 3, 1, 1]},
+            {'conv_stage%d_denseblock5_1' % i: [128, 128, 3, 1, 1]},
+            {'conv_stage%d_denseblock5_2' % i: [128, 128, 3, 1, 1]},
+            {'conv_stage%d_denseblock5_3' % i: [128, 128, 3, 1, 1]},
+            {'conv_stage%d_6' % i: [128, 128, 1, 1, 0]},
+            {'conv_stage%d_7' % i: [128, 38, 1, 1, 0]}
         ]
 
-        blocks['block%d_2' % i] = [
-            {'Mconv1_stage%d_L2' % i: [185, 128, 7, 1, 3]},
-            {'Mconv2_stage%d_L2' % i: [128, 128, 7, 1, 3]},
-            {'Mconv3_stage%d_L2' % i: [128, 128, 7, 1, 3]},
-            {'Mconv4_stage%d_L2' % i: [128, 128, 7, 1, 3]},
-            {'Mconv5_stage%d_L2' % i: [128, 128, 7, 1, 3]},
-            {'Mconv6_stage%d_L2' % i: [128, 128, 1, 1, 0]},
-            {'Mconv7_stage%d_L2' % i: [128, 19, 1, 1, 0]}
+    # Stage tp+1 (tc=1) 提confidence map所以输出heatmap是输出channel=19的维度
+    for i in range(tp+1, tp+tc+1):
+        blocks['block%d' % i] = [
+            {'conv_stage%d_denseblock1_1' % i: [128+38, 128, 3, 1, 1]},
+            {'conv_stage%d_denseblock1_2' % i: [128, 128, 3, 1, 1]},
+            {'conv_stage%d_denseblock1_3' % i: [128, 128, 3, 1, 1]},
+            {'conv_stage%d_denseblock2_1' % i: [128, 128, 3, 1, 1]},
+            {'conv_stage%d_denseblock2_2' % i: [128, 128, 3, 1, 1]},
+            {'conv_stage%d_denseblock2_3' % i: [128, 128, 3, 1, 1]},
+            {'conv_stage%d_denseblock3_1' % i: [128, 128, 3, 1, 1]},
+            {'conv_stage%d_denseblock3_2' % i: [128, 128, 3, 1, 1]},
+            {'conv_stage%d_denseblock3_3' % i: [128, 128, 3, 1, 1]},
+            {'conv_stage%d_denseblock4_1' % i: [128, 128, 3, 1, 1]},
+            {'conv_stage%d_denseblock4_2' % i: [128, 128, 3, 1, 1]},
+            {'conv_stage%d_denseblock4_3' % i: [128, 128, 3, 1, 1]},
+            {'conv_stage%d_denseblock5_1' % i: [128, 128, 3, 1, 1]},
+            {'conv_stage%d_denseblock5_2' % i: [128, 128, 3, 1, 1]},
+            {'conv_stage%d_denseblock5_3' % i: [128, 128, 3, 1, 1]},
+            {'conv_stage%d_6' % i: [128, 128, 1, 1, 0]},
+            {'conv_stage%d_7' % i: [128, 19, 1, 1, 0]}
         ]
 
     models = {}
 
-    print("Bulding VGG19...")
     models['block0'] = make_vgg19_block(block0)
 
     for k, v in blocks.items():
         models[k] = make_stages(list(v))
 
+    # 构造网络模型
     class cmu_openpose_model(torch.nn.Module):
         def __init__(self, model_dict):
             super(cmu_openpose_model, self).__init__()
             self.model0 = model_dict['block0']
-            self.model1_1 = model_dict['block1_1']
-            # 采用动态执行代码的方式，构建任意stage的网络模型
-            for i in range(2, num_stages + 1):
-                exec("self.model%d_1 = model_dict['block%d_1']"%(i, i))
-            """
-            if num_stages > 1:
-                self.model2_1 = model_dict['block2_1']
-            if num_stages > 2:
-                self.model3_1 = model_dict['block3_1']
-            if num_stages > 3:
-                self.model4_1 = model_dict['block4_1']
-            if num_stages > 4:
-                self.model5_1 = model_dict['block5_1']
-            if num_stages > 5:
-                self.model6_1 = model_dict['block6_1']
-            """
-            
-            self.model1_2 = model_dict['block1_2']
-            # 采用动态执行代码的方式，构建任意stage的网络模型(同上)
-            for i in range(2, num_stages + 1):
-                exec("self.model%d_2 = model_dict['block%d_2']"%(i, i))
-            """
-            if num_stages > 1:
-                self.model2_2 = model_dict['block2_2']
-            if num_stages > 2:
-                self.model3_2 = model_dict['block3_2']
-            if num_stages > 3:
-                self.model4_2 = model_dict['block4_2']
-            if num_stages > 4:
-                self.model5_2 = model_dict['block5_2']
-            if num_stages > 5:
-                self.model6_2 = model_dict['block6_2']
-            """
-
+            # 采用动态执行代码的方式，构建任意stage位tp+tc的网络模型
+            for i in range(1, tp+tc+1):
+                exec("self.model%d = model_dict['block%d']"%(i, i))
+            # 随机初始化
             self._initialize_weights_norm()
 
         def forward(self, x):
-
-            saved_for_loss = []
+            # 定义intermediate_map用来存放每个stage的map信息
+            intermediate_map = []
+            # out0用来存储VGG19的前10层信息
             out0 = self.model0(x)
 
-            out1_1 = self.model1_1(out0)
-            out1_2 = self.model1_2(out0)
-            out2 = torch.cat([out1_1, out1_2, out0], 1)
-            saved_for_loss.append(out1_1)
-            saved_for_loss.append(out1_2)
+            # 实现stages
+            for i_stage in range(1, tp+tc+1):
+                if i_stage > 1:
+                    # 除了第一个stage以外，每个stage使用上一个stage的结果加上VGG feature
+                    out1 = torch.cat([out0, out1], 1)
+                else:
+                    # 第一个stage只用VGG feature
+                    out1 = out0
 
-            """
-            if num_stages > 1:
-                out2_1 = self.model2_1(out2)
-                out2_2 = self.model2_2(out2)
-                out3 = torch.cat([out2_1, out2_2, out0], 1)
-                saved_for_loss.append(out2_1)
-                saved_for_loss.append(out2_2)
-            else:
-                return (out1_1, out1_2), saved_for_loss
+                # 对连续5个块的densenet的实现
+                for i in range(5):
+                    # out1_d1 = self.model1[i*3+0](out1)
+                    out1_d1 = eval("self.model%d[i*6+0](out1)" % i_stage)
+                    out1_d1 = eval("self.model%d[i*6+1](out1_d1)" % i_stage)
+                    # out1_d2 = self.model1[i*3+1](out1_d1)
+                    out1_d2 = eval("self.model%d[i*6+2](out1_d1)" % i_stage)
+                    out1_d2 = eval("self.model%d[i*6+3](out1_d2)" % i_stage)
+                    # out1_d3 = self.model1[i*3+2](out1_d2)
+                    out1_d3 = eval("self.model%d[i*6+4](out1_d2)" % i_stage)
+                    out1_d3 = eval("self.model%d[i*6+5](out1_d3)" % i_stage)
+                    out1 = out1_d1 + out1_d2 + out1_d3
+                
+                # 然后是2个1x1整合
+                # out1 = self.model1[31](self.model1[30](out1))
+                out1 = eval("self.model%d[31](self.model%d[30](out1))" % (i_stage, i_stage))
+                # out1 = self.model1[32](out1) # no relu
+                out1 = eval("self.model%d[32](out1)" % i_stage)
+                # 这里out1得到的就是PAF或者confidence map
 
-            if num_stages > 2:
-                out3_1 = self.model3_1(out3)
-                out3_2 = self.model3_2(out3)
-                out4 = torch.cat([out3_1, out3_2, out0], 1)
-                saved_for_loss.append(out3_1)
-                saved_for_loss.append(out3_2)
-            else:
-                return (out2_1, out2_2), saved_for_loss
+                # 记录下这个map用于intermediate supervision
+                intermediate_map.append(out1)
+            # 每个stage的实现到此结束
 
-            if num_stages > 3:
-                out4_1 = self.model4_1(out4)
-                out4_2 = self.model4_2(out4)
-                out5 = torch.cat([out4_1, out4_2, out0], 1)
-                saved_for_loss.append(out4_1)
-                saved_for_loss.append(out4_2)
-            else:
-                return (out3_1, out3_2), saved_for_loss
 
-            if num_stages > 4:
-                out5_1 = self.model5_1(out5)
-                out5_2 = self.model5_2(out5)
-                out6 = torch.cat([out5_1, out5_2, out0], 1)
-                saved_for_loss.append(out5_1)
-                saved_for_loss.append(out5_2)
-            else:
-                return (out4_1, out4_2), saved_for_loss
-
-            if num_stages > 5:
-                out6_1 = self.model6_1(out6)
-                out6_2 = self.model6_2(out6)
-                saved_for_loss.append(out6_1)
-                saved_for_loss.append(out6_2)
-            else:
-                return (out5_1, out5_2), saved_for_loss
-
-            return (out6_1, out6_2), saved_for_loss
-            """
-
-            # i的取值范围是2到stage个数
-            for i in range(2, num_stages + 1):
-                exec("out%d_1 = self.model%d_1(out%d)"%(i, i, i))
-                exec("out%d_2 = self.model%d_2(out%d)"%(i, i, i))
-                if i < num_stages:
-                    exec("out%d = torch.cat([out%d_1, out%d_2, out0], 1)"%(i+1, i, i))
-                exec("saved_for_loss.append(out%d_1)"%i)
-                exec("saved_for_loss.append(out%d_2)"%i)
             # 不能在exec函数中调用return，否则报错"SyntaxError: 'return' outside function"
             #   exec("return (out%d_1, out%d_2), saved_for_loss"%(num_stages, num_stages))
             # 因此改用eval动态赋值的方式
-            return (eval("out%d_1"%num_stages), eval("out%d_2"%num_stages)), saved_for_loss
+            #(eval("out%d_1"%num_stages), eval("out%d_2"%num_stages)), saved_for_loss
+            return intermediate_map
 
         def _initialize_weights_norm(self):
 
@@ -231,30 +207,11 @@ def openpose_model(num_stages = 6):
                         torch.nn.init.constant_(m.bias, 0.0)
 
             # 每个stage最后一层没有Relu
-            torch.nn.init.normal_(self.model1_1[8].weight, std=0.01)
-            torch.nn.init.normal_(self.model1_2[8].weight, std=0.01)
+            torch.nn.init.normal_(self.model1[32].weight, std=0.01)
 
-            for i in range(2, num_stages + 1):
-                exec("torch.nn.init.normal_(self.model%d_1[12].weight, std=0.01)"%i)
-                exec("torch.nn.init.normal_(self.model%d_2[12].weight, std=0.01)"%i)
-
-            """
-            if num_stages > 1:
-                torch.nn.init.normal_(self.model2_1[12].weight, std=0.01)
-                torch.nn.init.normal_(self.model2_2[12].weight, std=0.01)
-            if num_stages > 2:
-                torch.nn.init.normal_(self.model3_1[12].weight, std=0.01)
-                torch.nn.init.normal_(self.model3_2[12].weight, std=0.01)
-            if num_stages > 3:
-                torch.nn.init.normal_(self.model4_1[12].weight, std=0.01)
-                torch.nn.init.normal_(self.model4_2[12].weight, std=0.01)
-            if num_stages > 4:
-                torch.nn.init.normal_(self.model5_1[12].weight, std=0.01)
-                torch.nn.init.normal_(self.model5_2[12].weight, std=0.01)
-            if num_stages > 5:
-                torch.nn.init.normal_(self.model6_1[12].weight, std=0.01)
-                torch.nn.init.normal_(self.model6_2[12].weight, std=0.01)
-            """
+            for i in range(2, 4):
+                exec("torch.nn.init.normal_(self.model%d[32].weight, std=0.01)"%i)
 
     model = cmu_openpose_model(models)
+    print("Openpose model building finished.")
     return model
