@@ -123,31 +123,29 @@ class AverageMeter(object):
 def get_loss(intermediate_map, heat_temp, vec_temp):
     import torch.nn
     import collections
+    from config import num_stages, stage_define, generate_codec
+
     saved_for_log = collections.OrderedDict()
     criterion = torch.nn.MSELoss(reduction='mean').cuda()
     total_loss = 0
 
-    for j in range(3):
-        pred_paf = intermediate_map[j]
-        loss_paf = criterion(pred_paf, vec_temp)
-        total_loss += loss_paf
-        saved_for_log["loss_stage%d" % (j+1)] = loss_paf.item()
-    pred_hm = intermediate_map[3]
-    loss_hm = criterion(pred_hm, heat_temp)
-    total_loss += loss_hm
-    saved_for_log["loss_stage4"] = loss_hm.item()
+    stage_codec = generate_codec(stage_define)
 
-    saved_for_log['max_ht'] = torch.max(
-        intermediate_map[-1].data[:, 0:-1, :, :]).item()
-    saved_for_log['min_ht'] = torch.min(
-        intermediate_map[-1].data[:, 0:-1, :, :]).item()
-    saved_for_log['max_paf'] = torch.max(intermediate_map[-2].data).item()
-    saved_for_log['min_paf'] = torch.min(intermediate_map[-2].data).item()
+    for j in range(num_stages):
+        pred = intermediate_map[j]
+        if stage_codec[j]:
+            # PAF
+            loss = criterion(pred, vec_temp)
+        else:
+            # heatmap
+            loss = criterion(pred, heat_temp)
+        total_loss += loss
+        saved_for_log["loss_stage%d" % (j+1)] = loss.item()
 
     return total_loss, saved_for_log
 
 import time
-from config import print_freq
+from config import print_freq, num_stages
 
 def train(train_loader, model, optimizer, epoch):
     import torch.cuda
@@ -156,29 +154,16 @@ def train(train_loader, model, optimizer, epoch):
     losses = AverageMeter()
     
     meter_dict = {}
-    meter_dict['loss_stage1'] = AverageMeter()
-    meter_dict['loss_stage2'] = AverageMeter()
-    meter_dict['loss_stage3'] = AverageMeter()
-    meter_dict['loss_stage4'] = AverageMeter()
-    meter_dict['max_ht'] = AverageMeter()
-    meter_dict['min_ht'] = AverageMeter()    
-    meter_dict['max_paf'] = AverageMeter()    
-    meter_dict['min_paf'] = AverageMeter()
+    for i in range(num_stages):
+        meter_dict["loss_stage%d" % (i + 1)] = AverageMeter()
     
     # switch to train mode
     model.train()
 
     end = time.time()
     for i, (img, heatmap_target, paf_target) in enumerate(train_loader):
-        # measure data loading time
-        #writer.add_text('Text', 'text logged at step:' + str(i), i)
-        
-        #for name, param in model.named_parameters():
-        #    writer.add_histogram(name, param.clone().cpu().data.numpy(),i)        
-        data_time.update(time.time() - end)
 
-        # 实验室机子只有一块GTX1080，显存太少，只好不断的清理空间
-        torch.cuda.empty_cache()
+        data_time.update(time.time() - end)
 
         img = img.cuda()
         heatmap_target = heatmap_target.cuda()
@@ -205,28 +190,7 @@ def train(train_loader, model, optimizer, epoch):
             print(">> Time: " + time.strftime("%Y-%m-%d %H:%M:%S.", time.localtime()), end = "\t")
             print("[Train] Epoch %d, Iteration [%d/%d]:" % (epoch, i, len(train_loader)))
             print("   Total Loss = {loss:.6f}".format(loss=losses.val))
-
-            """
-            # Obtain the detailed losses
-            # 获取具体每个stage的loss
-            stage_losses_l1 = list()
-            stage_losses_l2 = list()
-            for j, (name, value) in enumerate(meter_dict.items()):
-                if j%2:
-                    stage_losses_l2.append(value.val)
-                else:
-                    stage_losses_l1.append(value.val)
-            # L1 loss
-            print_text = "   L1 loss:"
-            for j in range(len(stage_losses_l1)):
-                print_text += "%8.4f" % stage_losses_l1[j]
-            print(print_text)
-            # L2 loss
-            print_text = "   L2 loss:"
-            for j in range(len(stage_losses_l2)):
-                print_text += "%8.4f" % stage_losses_l2[j]
-            print(print_text)
-            """
+        
     return losses.avg
 
 def validate(val_loader, model, epoch):
@@ -240,10 +204,6 @@ def validate(val_loader, model, epoch):
     meter_dict['loss_stage2'] = AverageMeter()
     meter_dict['loss_stage3'] = AverageMeter()
     meter_dict['loss_stage4'] = AverageMeter()
-    meter_dict['max_ht'] = AverageMeter()
-    meter_dict['min_ht'] = AverageMeter()    
-    meter_dict['max_paf'] = AverageMeter()    
-    meter_dict['min_paf'] = AverageMeter()
     # switch to train mode
     model.eval()
 
@@ -251,10 +211,6 @@ def validate(val_loader, model, epoch):
     for i, (img, heatmap_target, paf_target) in enumerate(val_loader):
         # measure data loading time
         data_time.update(time.time() - end)
-
-        # Recycle the GPU memory since my GTX1080 card is limited
-        # 实验室机子只有一块GTX1080，显存太少，只好不断的清理空间
-        torch.cuda.empty_cache()
 
         img = img.cuda()
         heatmap_target = heatmap_target.cuda()
@@ -264,9 +220,6 @@ def validate(val_loader, model, epoch):
         intermediate_map = model(img)
         
         total_loss, saved_for_log = get_loss(intermediate_map, heatmap_target, paf_target)
-               
-        #for name,_ in meter_dict.items():
-        #    meter_dict[name].update(saved_for_log[name], img.size(0))
             
         losses.update(total_loss.item(), img.size(0))
 
@@ -275,7 +228,6 @@ def validate(val_loader, model, epoch):
         end = time.time()  
         if i % print_freq == 0:
             # Print general information
-            # Validation阶段没有各个stage loss的计算
             print(">  Time: " + time.strftime("%Y-%m-%d %H:%M:%S.", time.localtime()), end = "\t")
             print("[Validation] Epoch %d, Iteration [%d/%d]" % (epoch, i, len(val_loader)), end = ":")
             print("Loss = {loss:.6f}".format(loss=losses.val))

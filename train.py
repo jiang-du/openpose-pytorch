@@ -6,11 +6,13 @@ train_loader, val_loader, train_data, val_data = functions.train_preparation()
 import torch
 from net_arch import openpose_pami
 import config
-model = openpose_pami(num_stages = config.num_stages).cuda()
-# print(model)
 
-# 机子只有一块卡，不需要并行计算
-# model = torch.nn.DataParallel(model).cuda()
+# 多GPU时请开启这个选项
+if config.multi_gpu_train:
+    model = torch.nn.DataParallel(openpose_pami(stage_define = config.stage_define)).cuda()
+else:
+    model = openpose_pami(stage_define = config.stage_define).cuda()
+# print(model)
 
 # 加载预训练权重，并获取返回值(加载模式)
 load_flag = functions.load_weights(model)
@@ -19,7 +21,7 @@ load_flag = functions.load_weights(model)
 if (load_flag==0) or (load_flag==3):
     # 前5个固定epoch固定住VGG部分，并训练后面的网络结构
     for i in range(20):
-        for param in model.model0[i].parameters():
+        for param in (model.module.model0[i].parameters() if config.multi_gpu_train else model.model0[i].parameters()):
             # 梯度锁定
             param.requires_grad = False
 
@@ -54,7 +56,8 @@ optimizer = torch.optim.SGD(trainable_vars, lr = config.learning_rate,
                            nesterov = config.nesterov)
 
 # 定义learning rate调整规则
-lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.8, patience=5, verbose=True, threshold=0.0001, threshold_mode='rel', cooldown=3, min_lr=0, eps=1e-08)
+lr_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda epoch: 0.05/(epoch+1))
+#lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.8, patience=5, verbose=True, threshold=0.0001, threshold_mode='rel', cooldown=3, min_lr=0, eps=1e-08)
 
 from numpy import inf
 best_val_loss = inf
@@ -62,11 +65,11 @@ best_val_loss = inf
 for epoch in range(5, config.num_epochs):
     # train
     train_loss = functions.train(train_loader, model, optimizer, epoch)
-    torch.cuda.empty_cache() # 显存太小了，只好不断的释放空间
+    torch.cuda.empty_cache()
 
     # validation
     val_loss = functions.validate(val_loader, model, epoch)
-    torch.cuda.empty_cache() # 显存太小了，只好不断的释放空间
+    torch.cuda.empty_cache()
     
     lr_scheduler.step(val_loss)
     

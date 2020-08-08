@@ -46,11 +46,13 @@ def make_stages(cfg_dict):
     stage_layer.append(conv2d)
     return stage_layer # 注意这里不能用Sequential，因为要写densenet
 
-def openpose_pami(num_stages = 6):
-    # tp表示PAF场的stage，tc表示confidence map的stage数
-    tp=3
-    tc=1 # 暂时还不能编辑
-    blocks = {}
+def openpose_pami(stage_define = "PPPHHH"):
+    
+    from config import generate_codec
+    stage_codec = generate_codec(stage_define)
+    num_stages = len(stage_define)
+
+    blocks = dict()
     # block0是用了VGG前10层作为特征提取，这部分需要载入ImageNet权重
     block0 = [{'conv1_1': [3, 64, 3, 1, 1]},
                 {'conv1_2': [64, 64, 3, 1, 1]},
@@ -68,31 +70,22 @@ def openpose_pami(num_stages = 6):
                 {'conv4_3': [512, 256, 3, 1, 1]},
                 {'conv4_4': [256, 128, 3, 1, 1]}]
 
-    # Stage 1 提PAF场所以输出heatmap是输出channel=38的维度
-    blocks['block1'] = [
-        {'conv_stage1_denseblock1_1': [128, 128, 3, 1, 1]},
-        {'conv_stage1_denseblock1_2': [128, 128, 3, 1, 1]},
-        {'conv_stage1_denseblock1_3': [128, 128, 3, 1, 1]},
-        {'conv_stage1_denseblock2_1': [128, 128, 3, 1, 1]},
-        {'conv_stage1_denseblock2_2': [128, 128, 3, 1, 1]},
-        {'conv_stage1_denseblock2_3': [128, 128, 3, 1, 1]},
-        {'conv_stage1_denseblock3_1': [128, 128, 3, 1, 1]},
-        {'conv_stage1_denseblock3_2': [128, 128, 3, 1, 1]},
-        {'conv_stage1_denseblock3_3': [128, 128, 3, 1, 1]},
-        {'conv_stage1_denseblock4_1': [128, 128, 3, 1, 1]},
-        {'conv_stage1_denseblock4_2': [128, 128, 3, 1, 1]},
-        {'conv_stage1_denseblock4_3': [128, 128, 3, 1, 1]},
-        {'conv_stage1_denseblock5_1': [128, 128, 3, 1, 1]},
-        {'conv_stage1_denseblock5_2': [128, 128, 3, 1, 1]},
-        {'conv_stage1_denseblock5_3': [128, 128, 3, 1, 1]},
-        {'conv_stage1_6': [128, 512, 1, 1, 0]},
-        {'conv_stage1_7': [512, 38, 1, 1, 0]}
-    ]
+    for i in range(1, num_stages + 1):
+        
+        # 输入这个stage的channel
+        if i==1:
+            # 上一个stage是VGG的输出
+            num_channel_in = 128
+        else:
+            # 上一个stage的输出和VGG的concate
+            num_channel_in = 128 + 19 * (stage_codec[i - 2] + 1)
+        
+        # 输出channel，heatmap是19，PAF场是38
+        num_channel_out = 19 * (stage_codec[i - 1] + 1)
 
-    # Stage 2 - tp 提PAF场所以输出heatmap是输出channel=38的维度
-    for i in range(2, tp+1):
+        # 制作当前stage的网络结构
         blocks['block%d' % i] = [
-            {'conv_stage%d_denseblock1_1' % i: [128+38, 128, 3, 1, 1]},
+            {'conv_stage%d_denseblock1_1' % i: [num_channel_in, 128, 3, 1, 1]},
             {'conv_stage%d_denseblock1_2' % i: [128, 128, 3, 1, 1]},
             {'conv_stage%d_denseblock1_3' % i: [128, 128, 3, 1, 1]},
             {'conv_stage%d_denseblock2_1' % i: [128, 128, 3, 1, 1]},
@@ -108,33 +101,11 @@ def openpose_pami(num_stages = 6):
             {'conv_stage%d_denseblock5_2' % i: [128, 128, 3, 1, 1]},
             {'conv_stage%d_denseblock5_3' % i: [128, 128, 3, 1, 1]},
             {'conv_stage%d_6' % i: [128, 128, 1, 1, 0]},
-            {'conv_stage%d_7' % i: [128, 38, 1, 1, 0]}
+            {'conv_stage%d_7' % i: [128, num_channel_out, 1, 1, 0]}
         ]
 
-    # Stage tp+1 (tc=1) 提confidence map所以输出heatmap是输出channel=19的维度
-    for i in range(tp+1, tp+tc+1):
-        blocks['block%d' % i] = [
-            {'conv_stage%d_denseblock1_1' % i: [128+38, 128, 3, 1, 1]},
-            {'conv_stage%d_denseblock1_2' % i: [128, 128, 3, 1, 1]},
-            {'conv_stage%d_denseblock1_3' % i: [128, 128, 3, 1, 1]},
-            {'conv_stage%d_denseblock2_1' % i: [128, 128, 3, 1, 1]},
-            {'conv_stage%d_denseblock2_2' % i: [128, 128, 3, 1, 1]},
-            {'conv_stage%d_denseblock2_3' % i: [128, 128, 3, 1, 1]},
-            {'conv_stage%d_denseblock3_1' % i: [128, 128, 3, 1, 1]},
-            {'conv_stage%d_denseblock3_2' % i: [128, 128, 3, 1, 1]},
-            {'conv_stage%d_denseblock3_3' % i: [128, 128, 3, 1, 1]},
-            {'conv_stage%d_denseblock4_1' % i: [128, 128, 3, 1, 1]},
-            {'conv_stage%d_denseblock4_2' % i: [128, 128, 3, 1, 1]},
-            {'conv_stage%d_denseblock4_3' % i: [128, 128, 3, 1, 1]},
-            {'conv_stage%d_denseblock5_1' % i: [128, 128, 3, 1, 1]},
-            {'conv_stage%d_denseblock5_2' % i: [128, 128, 3, 1, 1]},
-            {'conv_stage%d_denseblock5_3' % i: [128, 128, 3, 1, 1]},
-            {'conv_stage%d_6' % i: [128, 128, 1, 1, 0]},
-            {'conv_stage%d_7' % i: [128, 19, 1, 1, 0]}
-        ]
-
-    models = {}
-
+    # 构造模型字典
+    models = dict()
     models['block0'] = make_vgg19_block(block0)
 
     for k, v in blocks.items():
@@ -145,8 +116,8 @@ def openpose_pami(num_stages = 6):
         def __init__(self, model_dict):
             super(cmu_openpose_model, self).__init__()
             self.model0 = model_dict['block0']
-            # 采用动态执行代码的方式，构建任意stage位tp+tc的网络模型
-            for i in range(1, tp+tc+1):
+            # 采用动态执行代码的方式，构建任意stage的网络模型
+            for i in range(1, num_stages + 1):
                 exec("self.model%d = model_dict['block%d']"%(i, i))
             # 随机初始化
             self._initialize_weights_norm()
@@ -158,7 +129,7 @@ def openpose_pami(num_stages = 6):
             out0 = self.model0(x)
 
             # 实现stages
-            for i_stage in range(1, tp+tc+1):
+            for i_stage in range(1, num_stages + 1):
                 if i_stage > 1:
                     # 除了第一个stage以外，每个stage使用上一个stage的结果加上VGG feature
                     out1 = torch.cat([out0, out1], 1)
@@ -168,21 +139,16 @@ def openpose_pami(num_stages = 6):
 
                 # 对连续5个块的densenet的实现
                 for i in range(5):
-                    # out1_d1 = self.model1[i*3+0](out1)
                     out1_d1 = eval("self.model%d[i*6+0](out1)" % i_stage)
                     out1_d1 = eval("self.model%d[i*6+1](out1_d1)" % i_stage)
-                    # out1_d2 = self.model1[i*3+1](out1_d1)
                     out1_d2 = eval("self.model%d[i*6+2](out1_d1)" % i_stage)
                     out1_d2 = eval("self.model%d[i*6+3](out1_d2)" % i_stage)
-                    # out1_d3 = self.model1[i*3+2](out1_d2)
                     out1_d3 = eval("self.model%d[i*6+4](out1_d2)" % i_stage)
                     out1_d3 = eval("self.model%d[i*6+5](out1_d3)" % i_stage)
                     out1 = out1_d1 + out1_d2 + out1_d3
                 
-                # 然后是2个1x1整合
-                # out1 = self.model1[31](self.model1[30](out1))
+                # 然后是2个1*1整合
                 out1 = eval("self.model%d[31](self.model%d[30](out1))" % (i_stage, i_stage))
-                # out1 = self.model1[32](out1) # no relu
                 out1 = eval("self.model%d[32](out1)" % i_stage)
                 # 这里out1得到的就是PAF或者confidence map
 
